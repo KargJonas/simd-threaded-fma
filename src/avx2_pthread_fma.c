@@ -6,17 +6,31 @@
 #include <unistd.h>
 #include <time.h>
 
-#include "./simd.h"
+
+#define N 1000000000
+#define WARMUP 30
+#define RUNS 50
+
 
 // This program manages to perform a billion mulaccs in 0.42s (avg)
 // Each one of the four buffers involved holds 4Gb worth of floats.
 // In total, we read 12Gb and write 4Gb in 0.42s
-// This means we (theoretically) read with 55Gb/s and write with 18Gb/s
-// which should be impossible given my measured 10Gb/s mem bandwidth.
+// This means we (theoretically) read with ~28GB/s and write with ~9.5Gb/s
+// which should be impossible given my measured 10Gb/s read bandwidth.
 // Caching is out of the picture because of the workload type
 // (and because i explicitly bypass caching using _mm256_stream_ps).
 // Maybe there is a logical error in my calculation somewhere...
 
+
+// todo: handle cases where array length is less than N_PARALLEL
+// Ternary SIMD operations on arrays
+#define T_SIMD_ARR_OP(NAME, OP) \
+void NAME(float* a, float* b, float* c, float* result, size_t nelem) { \
+    size_t last = nelem - N_PARALLEL; \
+    size_t i; for (i = 0; i <= last; i += N_PARALLEL) \
+        _mm256_stream_ps(result + i, OP(_mm256_loadu_ps(a + i), _mm256_loadu_ps(b + i), _mm256_loadu_ps(c + i))); \
+    if (i != nelem) _mm256_storeu_ps(result + last, OP(_mm256_loadu_ps(a + last), _mm256_loadu_ps(b + last), _mm256_loadu_ps(c + last))); \
+}
 
 // AVX2 can process 32 Bytes of data in parallel.
 // This means we'll be able to handle eight 4 Byte floats at once.
@@ -92,20 +106,19 @@ int main() {
     }
 
     // Warmup
-    for (int i = 0; i < 30; i++) run();
+    for (int i = 0; i < WARMUP; i++) run();
 
     // START EXECUTION TIME MEASUREMENT
     printf("Start\n");
     struct timespec begin, end;
     clock_gettime(CLOCK_MONOTONIC, &begin);
 
-    // run();
-    for (int i = 0; i < 20; i++) run();
+    for (int i = 0; i < RUNS; i++) run();
 
     // END EXECUTION TIME MEASUREMENT
     clock_gettime(CLOCK_MONOTONIC, &end);
     double time_spent = (end.tv_sec - begin.tv_sec) + (end.tv_nsec - begin.tv_nsec) / 1e9;
-    printf("Avg execution time: %f seconds\n", time_spent / 20.);
+    printf("Avg execution time: %f seconds\n", time_spent / (float)RUNS);
 
     for (size_t i = 0; i < 10; i++) {
         printf("%6.3f * %6.3f + %6.3f = %6.3f\n", a[i], b[i], c[i], result[i]);
